@@ -1,0 +1,189 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "instantly-reply-webhook",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c21de790-dcc4-43df-889d-88e62fdf82e7",
+      "name": "Webhook",
+      "webhookId": "YOUR_INSTANTLY_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5bf9a2e7-bcfe-4d74-b2af-4a5e17bee35c",
+              "leftValue": "={{ $json.isPositiveOpportunity }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ],
+      "id": "863b9b3d-b17d-49bb-819c-dac1a3dfe518",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are evaluating an incoming cold email reply from Instantly.ai.\n\nINCOMING REPLY:\nFrom: {{ $json.body.lead_email }}\nCompany: {{ $json.body.company_name }}\nReply Text: {{ $json.body.reply_text }}\n\nDetermine if this reply is a positive response, meeting request, coffee chat invite, or expression of interest.\n\nReturn strictly raw JSON (no markdown wrapping):\n{\n  \"isPositiveOpportunity\": true,\n  \"summary\": \"<1-sentence summary of what the prospect said>\",\n  \"urgency\": \"High\"\n}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        256,
+        0
+      ],
+      "id": "e728688e-4d00-49d9-bdc8-4331840d181e",
+      "name": "Filter Positive Responses",
+      "retryOnFail": false,
+      "alwaysOutputData": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n  const rawText = item.json.text || item.json.output || '';\n  const cleanedText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\n\n  try {\n    const parsed = JSON.parse(cleanedText);\n    item.json.isPositiveOpportunity = parsed.isPositiveOpportunity ?? false;\n    item.json.summary = parsed.summary || 'No summary provided.';\n    item.json.urgency = parsed.urgency || 'Low';\n  } catch (e) {\n    item.json.isPositiveOpportunity = false;\n    item.json.summary = 'Failed to parse reply text.';\n    item.json.urgency = 'Low';\n  }\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        0
+      ],
+      "id": "a2d3f9b9-6ac2-4390-9258-b821797c4746",
+      "name": "Parse JSON"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🔥 INSTANTLY OUTBOUND REPLY ALERT!\n\n👤 Lead: {{ $('Webhook').item.json.body.lead_email }}\n🏢 Company: {{ $('Webhook').item.json.body.company_name }}\n\n💬 Reply Snippet:\n\"{{ $('Webhook').item.json.body.reply_text }}\"\n\n📝 Summary:\n{{ $json.summary }}\n\n👉 Check secondary inbox to respond!",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1152,
+        -96
+      ],
+      "id": "627b6729-82d0-441c-87c0-86343a528145",
+      "name": "Message the Telegram Bot",
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_ACCOUNT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        208,
+        192
+      ],
+      "id": "7231b4d2-fb99-4f40-bd94-d3c78c6340e1",
+      "name": "Instantly Responses",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GEMINI_ACCOUNT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Filter Positive Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Message the Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Positive Responses": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instantly Responses": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Filter Positive Responses",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "09b66cb70fc4ba097f92a6458a7f1fbb890134e7680b74bdf4c83a8f859a9af9"
+  }
+}

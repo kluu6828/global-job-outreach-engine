@@ -1,0 +1,3106 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1056,
+        208
+      ],
+      "id": "2957e2da-0e6d-41bb-b548-365da5fc5270",
+      "name": "JD Fit Scorer",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GEMINI_ACCOUNT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        -128
+      ],
+      "id": "742782d0-050e-453e-bd3e-77283b1e5dc4",
+      "name": "CV Tailor",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GEMINI_ACCOUNT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pdfshift.io/v3/convert/pdf",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_PDFSHIFT_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"{{ $json.renderedHtml.replace(/\"/g, '\\\\\"').replace(/\\n/g, '') }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2944,
+        -304
+      ],
+      "id": "8318f47e-eaf1-4506-a514-6d0901c74b65",
+      "name": "HTML to PDF",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_PDFSHIFT_ACCOUNT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Preferred Job Titles Filter Only').item.json.id + \" Tailored Resume.pdf\" }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3168,
+        -304
+      ],
+      "id": "e198623d-91e5-401e-bf90-eb88ff46c48e",
+      "name": "Tailored Resume on Cloud",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "YOUR_GOOGLE_DRIVE_ACCOUNT",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keywords that trigger removal (Management, Leadership, and non-IC roles)\nconst managementKeywords = [\n  'director', 'vp', 'vice president', 'head of', 'chief',\n  'manager', 'team lead', 'people lead', 'supervisor'\n];\n\n// Explicitly forbidden BDR, SDR, BDM, and Sales Rep Keywords\nconst forbiddenPipelineKeywords = [\n  'bdr', 'sdr', 'bdm', \n  'business development representative', 'sales development representative',\n  'business development manager', 'business development',\n  'sales representative', 'sales rep'\n];\n\n// Specific roles where Senior / Principal titles MUST be excluded\nconst seniorExcludedRoles = [\n  'account executive', 'ae',\n  'sales engineer', 'solutions engineer',\n  'solutions consultant', 'pre-sales', 'presales'\n];\n\n// Target IC Role Keywords (Closing AEs & Pre-Sales Engineering ONLY)\nconst targetRoleKeywords = [\n  // SMB AE\n  'smb account executive', 'smb ae', 'small business account executive', 'small business ae',\n\n  // Mid-Market AE\n  'mid market account executive', 'mid-market account executive', 'mid market ae', 'mid-market ae',\n  \n  // Enterprise AE\n  'enterprise account executive', 'enterprise ae',\n  \n  // Commercial & Strategic AE\n  'commercial account executive', 'commercial ae',\n  'strategic account executive', 'strategic ae',\n  \n  // General Core AE\n  'account executive',\n  \n  // Technical Pre-Sales & Value Engineering\n  'sales engineer', 'solutions engineer', 'solutions consultant', 'pre-sales', 'presales', 'value engineer'\n];\n\n// STRICT ALLOWLIST for On-Site and Hybrid roles (Hong Kong & Singapore Hubs)\nconst allowedCities = [\n  // Hong Kong Hubs & Districts\n  'hong kong', 'hk', 'central', 'admiralty', 'wan chai', 'causeway bay', 'quarry bay', 'tst', 'tsim sha tsui', 'kowloon', 'kwun tong',\n  // Singapore Hubs & Planning Areas\n  'singapore', 'sg', 'cbd', 'raffles place', 'marina bay', 'tanjong pagar', 'orchard', 'changi', 'jurong'\n];\n\nconst filteredItems = [];\n\nfor (const item of $input.all()) {\n  const job = item.json;\n  const title = String(job.title || '').toLowerCase();\n  const rawWorkplace = String(job.workplaceType || job.workplace_type || '').toLowerCase();\n  const location = String(job.location || '').toLowerCase();\n  const description = String(job.description || '').toLowerCase();\n  const fullText = `${location} ${rawWorkplace} ${title} ${description}`;\n\n  // 1. Exclude BDR, SDR, BDM, Business Development, and Sales Rep Titles Immediately\n  const isForbiddenPipeline = forbiddenPipelineKeywords.some(keyword => {\n    const regex = new RegExp(`\\\\b${keyword}\\\\b`, 'i');\n    return regex.test(title);\n  });\n  if (isForbiddenPipeline) continue;\n\n  // 2. Exclude Senior / Principal titles for AE / SE / Pre-Sales\n  const hasSeniorOrPrincipal = /\\b(senior|sr|sr\\.|principal)\\b/i.test(title);\n  if (hasSeniorOrPrincipal) {\n    const isAffectedRole = seniorExcludedRoles.some(role => new RegExp(`\\\\b${role}\\\\b`, 'i').test(title));\n    if (isAffectedRole) continue;\n  }\n\n  // 3. Exclude Management & Leadership Titles\n  const isManagement = managementKeywords.some(keyword => {\n    const regex = new RegExp(`\\\\b${keyword}\\\\b`, 'i');\n    return regex.test(title);\n  });\n  if (isManagement) continue;\n\n  // 4. Must match at least one target IC role keyword (AE / SE / Pre-Sales)\n  const isTargetIC = targetRoleKeywords.some(keyword => {\n    const regex = new RegExp(`\\\\b${keyword}\\\\b`, 'i');\n    return regex.test(title);\n  });\n  if (!isTargetIC) continue;\n\n  // 5. Classify Workplace Type (Remote, Hybrid, On-Site)\n  let normalizedWorkplace = 'On-Site'; // Default fallback\n  if (rawWorkplace.includes('remote') || location.includes('remote') || title.includes('remote')) {\n    normalizedWorkplace = 'Remote';\n  } else if (rawWorkplace.includes('hybrid') || location.includes('hybrid') || title.includes('hybrid') || description.includes('hybrid')) {\n    normalizedWorkplace = 'Hybrid';\n  } else if (rawWorkplace.includes('on-site') || rawWorkplace.includes('onsite') || rawWorkplace.includes('in-office')) {\n    normalizedWorkplace = 'On-Site';\n  }\n\n  // 6. Allowlist Filter: Remote is ALWAYS accepted. On-Site/Hybrid MUST be in an allowed HK/SG hub.\n  if (normalizedWorkplace !== 'Remote') {\n    const isAllowedCity = allowedCities.some(city => {\n      const regex = new RegExp(`\\\\b${city}\\\\b`, 'i');\n      return regex.test(location) || regex.test(fullText);\n    });\n\n    if (!isAllowedCity) {\n      continue; // Rejects non-target metro locations outside HK/SG\n    }\n  }\n\n  // Pass allowed items forward with normalized workplace attribute\n  filteredItems.push({\n    json: {\n      ...job,\n      workplaceTypeNormalized: normalizedWorkplace\n    }\n  });\n}\n\nreturn filteredItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "e7123f1c-95db-4351-b5cd-e3ad57b1da28",
+      "name": "Preferred Job Titles Filter Only"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert tech sales recruiter evaluating a Job Description against a Candidate's Master Capability Matrix.\n\nCandidate Summary Context:\n- CS Degree from UWaterloo + Software Engineering internships (high technical adaptability).\n- Proven GTM/Sales track record across B2B SaaS, E-Commerce Infrastructure, Capital Equipment, and Agency Consulting.\n- Full-stack technical GTM automation capabilities: APIs, SQL, Python, Cursor, n8n, Clay, HubSpot, Gong, and Custom Calculators.\n- Citizenship & Work Authorization: \n  * Canada (Toronto/National): Canadian Citizen — NO sponsorship required.\n  * United States (NY/FL/TX/National): Eligible for TN-1 Visa (requires standard job offer letter under Engineer or Systems Analyst category; no cap or lottery).\n  * International (Hong Kong / Singapore): Requires standard corporate visa/pass sponsorship (HK General Employment Policy GEP Visa / Singapore Employment Pass EP). Note: Standard job listings without explicit PR/Citizenship restrictions are assumed viable for corporate sponsorship.\n\nTarget Job Titles & Roles:\n- Technical Pre-Sales & Engineering ONLY: Sales Engineer, Solutions Engineer, Solutions Consultant, Pre-Sales Consultant, Pre-Sales Engineer.\n- Closing & Revenue: Account Executive (AE), Mid-Market AE, Commercial AE, Technical AE, SMB AE, Enterprise AE.\n\nEvaluation Rules:\n1. HARD REJECTION (Fit Score = 0-4):\n   - Roles strictly titled as Solutions Architect, Forward Deployed Engineer, or Value Engineer.\n   - Requires 7+ or 10+ Years of Experience in a single hyper-specialized domain (e.g., Senior Enterprise Cybersecurity SE requiring 8+ years pure network security).\n   - US, HK, or Singapore Roles explicitly stating hard local residency/citizenship locks or forbidding sponsorship (e.g., \"Must be HK Permanent Resident / Must be Singapore Citizen or PR / No Visa Sponsorship Available / Active US Security Clearance Required\"). \n   - NOTE ON HK/SGP HYBRID ROLES: Do NOT reject roles simply because they are Hybrid/On-Site and require corporate visa/pass sponsorship (HK GEP Visa or Singapore EP). Corporate visa sponsorship for international candidates is EXPECTED and VALID for these markets.\n   - Non-sales, non-technical, or non-closing roles (e.g., pure Customer Success Manager, SDR/BDR, or non-technical Support Specialist).\n\n2. HIGH ADAPTABILITY RULE (DO NOT DOCK POINTS):\n   - Do NOT penalize the candidate for missing niche SaaS tools, specific cloud platforms (AWS, Azure, GCP), or specialized APIs. The candidate holds a UWaterloo CS degree and builds production Python/API pipelines, allowing complete software adaptation in days.\n\n3. SCORING BREAKDOWN (1-10):\n   - Core Motion Match (50%): Does the role align strictly with Sales Engineering, Solutions Engineering, Solutions Consulting, Pre-Sales, or Account Executive / Closing roles?\n   - Leveling & YoE (30%): Does it fit Early to Mid-Career IC levels (1-5 years required, or 0-3 years for SE)?\n   - Domain Overlap (20%): Developer Tools, E-Commerce, APIs, B2B SaaS, Analytics, Infrastructure, Capital Equipment.\n\nOutput Format (JSON only):\n{\n  \"fitScore\": <number 1-10>,\n  \"priorityTier\": \"<Tier 1 | Tier 2 | Reject>\",\n  \"reasoning\": \"<2 sentences max explaining the tier placement>\"\n}\n\nTier Definitions:\n- Tier 1 (Score 8-10): High conviction. Triggers DUAL actions: immediate standard ATS application PLUS multi-thread outreach (Apollo 3-person sourcing, custom resume tailoring, cold emails, and LinkedIn outreach).\n- Tier 2 (Score 5-7): Stretch or adjacent match. Triggers standard ATS application only (bypassing high-touch outbound).\n- Reject (Score < 5): Exceeds hard YoE limits, hard visa/citizenship blockers, excluded titles (Solutions Architect, Forward Deployed, Value Engineer), or non-aligned role.\n\nIMPORTANT: Return ONLY raw valid JSON. Do not wrap response in markdown or backticks.\n\n---\nJOB DETAILS TO EVALUATE:\n\nJob Title:\n{{ $json.title }}\n\nJob Description:\n{{ $json.descriptionText }}",
+        "batching": {
+          "batchSize": 5,
+          "delayBetweenBatches": 2000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "3285ef13-6971-467f-9fa2-f810fa3e0151",
+      "name": "Calculate Job Fit",
+      "retryOnFail": true,
+      "alwaysOutputData": false,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d52f99b9-5099-433f-9902-7b44b584228d",
+      "name": "Every 8am EST timezone"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7714bbe8-d1fe-432a-b49d-621008df3289",
+              "leftValue": "={{ $json.fields['Priority Tier'] }}",
+              "rightValue": "Tier 1",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1728,
+        0
+      ],
+      "id": "226938a3-3614-4f47-b707-4e9139ea2147",
+      "name": "Tier 1?"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert tech sales resume writer and Solutions Engineering and Account Executive recruiter. Your job is to analyze a target Job Description (JD) and reframe the candidate's core resume bullet points and generate a custom cover letter WITHOUT altering, exaggerating, or inventing any factual metrics, dates, or experience details.\n\nSTRICT NO-HALLUCINATION & FORMATTING RULES:\n1. PRESERVE ALL REAL METRICS AND EXPERIENCE EXACTLY:\n   - Independent Brokerage (3 Bullets): Closed ~$40k TCV early on for EXCELL Red Light to independent fitness clubs; sourced & qualified 15–30 opportunities monthly via outbound & warm intros; ran ~100 daily cold calls to book discovery & webinars; built Cursor + Clay automation engines\n   - Aftersell by Rokt (5 Bullets): Exceeded quota (110% Q2 '25, 130% Q3 '25); owned inbound GTM across 4 SaaS lines; drove ~5x base salary in influenced pipeline; maintained sub-20-min speed to lead; supported AEs with discovery & intent signals\n   - Garage Direct Online (3 Bullets): Scaled $0 to $50k MRR in 6 months; generated $1MM+ hybrid sales opportunities via SEO; built 15+ C-level strategic partnerships\n   - Loocrum (3 Bullets): Drove over $4.7MM top-line client revenue; secured 15+ e-commerce clients; increased client recurring revenue 30–55%\n   - SWE Internships (6 Bullets Focus Highlights ONLY - DO NOT INCLUDE COMPANY NAMES IN BULLET TEXT):\n     * Bullet 1 (Capco): Engineered APIs and full-stack enterprise features\n     * Bullet 2 (Rangle.io): Optimized e-commerce checkout and membership flows\n     * Bullet 3 (Enlighted): Developed IoT Bluetooth libraries and sensor communication protocols\n     * Bullet 4 (American Express): Built CRUD features and web services deployed across 12 global markets\n     * Bullet 5 (SMART Technologies): Scaled interactive software platform serving 3M+ active users\n     * Bullet 6 (5Crowd): Enhanced frontend performance and ad targeting, increasing CTR by 0.5x\n\n2. SWE INTERNSHIPS SPECIAL RULE:\n   - Do NOT include or repeat company names inside the sweInternships bullet point strings. Return ONLY the work description.\n   - Do NOT reference the UWaterloo degree in the SWE internship bullets.\n\n3. STRICT LENGTH & CHARACTER CONSTRAINTS:\n   - Bullet points: Target a ~95% max line fill, keeping strings between **110 and 130 characters total** to prevent overflow while maximizing impact.\n   - TECHNICAL & GTM STACKS (STRICT 85% LINE FILL): The technicalStack and revenueGtmStack strings MUST be ultra-concise, comma-separated lists targeting an 85% line fill (between 65 and 75 characters total each). Order them strictly from highest keyword precedence matching the JD priority down to lowest. Do not write long descriptive sentences.\n\n4. OUTPUT PROTOCOL (CRITICAL):\n   - Output MUST be 100% valid, raw JSON. \n   - Do NOT wrap the JSON in markdown code blocks (e.g., no ```json).\n   - Do NOT include any introductory or concluding conversational text.\n\nTarget Job Description:\n{{ $('Preferred Job Titles Filter Only').item.json.descriptionText }}\n\nOutput JSON Format:\n{\n  \"tailoredBullets\": {\n    \"independentBrokerage\": [\n      \"<Tailored Bullet 1>\",\n      \"<Tailored Bullet 2>\",\n      \"<Tailored Bullet 3>\",\n      \"<Tailored Bullet 4>\"\n    ],\n    \"aftersell\": [\n      \"<Tailored Bullet 1>\",\n      \"<Tailored Bullet 2>\",\n      \"<Tailored Bullet 3>\",\n      \"<Tailored Bullet 4>\",\n      \"<Tailored Bullet 5>\"\n    ],\n    \"garageDirect\": [\n      \"<Tailored Bullet 1>\",\n      \"<Tailored Bullet 2>\",\n      \"<Tailored Bullet 3>\"\n    ],\n    \"loocrum\": [\n      \"<Tailored Bullet 1>\",\n      \"<Tailored Bullet 2>\",\n      \"<Tailored Bullet 3>\"\n    ],\n    \"sweInternships\": [\n      \"<Tailored Bullet 1>\",\n      \"<Tailored Bullet 2>\",\n      \"<Tailored Bullet 3>\",\n      \"<Tailored Bullet 4>\",\n      \"<Tailored Bullet 5>\",\n      \"<Tailored Bullet 6>\"\n    ]\n  },\n  \"tailoredSkills\": {\n    \"technicalStack\": \"<Max 5 skills ordered by highest JD precedence, comma-separated, ~65-75 chars total>\",\n    \"revenueGtmStack\": \"<Max 5 tools ordered by highest JD precedence, comma-separated, ~65-75 chars total>\"\n  },\n  \"customCoverLetter\": \"<A concise 3-sentence note tying UWaterloo CS background + GTM track record to this target role>\"\n}",
+        "batching": {
+          "batchSize": 5,
+          "delayBetweenBatches": 2000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1904,
+        -304
+      ],
+      "id": "bd87e67c-74aa-44dd-9faf-62c482301ff0",
+      "name": "Tailor Resume Bullets to JD",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n  const rawText = item.json.text || item.json.output || '';\n  const cleanedText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\n\n  try {\n    const parsed = JSON.parse(cleanedText);\n    \n    // Helper function to safely truncate skills to ~85% line fill (75 chars)\n    // Backtracks to the last comma so no incomplete phrase or trailing comma is left\n    function formatSkillsString(str) {\n      if (!str) return \"\";\n      let trimmed = str.trim();\n      \n      // Return clean if already within the 85% fill limit (75 chars)\n      if (trimmed.length <= 75) return trimmed.replace(/,\\s*$/, '');\n      \n      // Cut down at max limit\n      let sliced = trimmed.substring(0, 75);\n      \n      // Backtrack to the last comma to drop the overflowing skill completely\n      const lastComma = sliced.lastIndexOf(',');\n      if (lastComma > 0) {\n        sliced = sliced.substring(0, lastComma);\n      } else {\n        // Fallback to last space if no comma is found\n        const lastSpace = sliced.lastIndexOf(' ');\n        if (lastSpace > 0) sliced = sliced.substring(0, lastSpace);\n      }\n      \n      return sliced.replace(/,\\s*$/, '').trim();\n    }\n\n    // Helper function to remove trailing periods from bullet arrays\n    const cleanBullets = (bulletObj) => {\n      const sanitized = {};\n      for (const [key, bullets] of Object.entries(bulletObj)) {\n        if (Array.isArray(bullets)) {\n          sanitized[key] = bullets.map(b => typeof b === 'string' ? b.replace(/\\.$/, '').trim() : b);\n        } else {\n          sanitized[key] = bullets;\n        }\n      }\n      return sanitized;\n    };\n\n    item.json.tailoredBullets = cleanBullets(parsed.tailoredBullets);\n    item.json.tailoredSkills = {\n      technicalStack: formatSkillsString(parsed.tailoredSkills?.technicalStack),\n      revenueGtmStack: formatSkillsString(parsed.tailoredSkills?.revenueGtmStack)\n    };\n    item.json.customCoverLetter = parsed.customCoverLetter;\n    \n  } catch (e) {\n    item.json.tailoredBullets = { independentBrokerage: [], aftersell: [], garageDirect: [], loocrum: [], sweInternships: [] };\n    item.json.tailoredSkills = { technicalStack: \"\", revenueGtmStack: \"\" };\n    item.json.customCoverLetter = \"JSON Parse Failed. Raw text received: \" + cleanedText.substring(0, 150) + \"...\";\n  }\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        -304
+      ],
+      "id": "51b754cf-37f4-437f-90b5-bef31bc53f97",
+      "name": "Cleanup LLM Output"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list",
+          "cachedResultName": "Tech Sales/SE Engine",
+          "cachedResultUrl": "AIRTABLE_LINK_1"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_JOBS_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "Jobs",
+          "cachedResultUrl": "AIRTABLE_LINK_2"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $('Preferred Job Titles Filter Only').item.json.id }}",
+            "Custom Cover Letter": "={{ $json.customCoverLetter }}",
+            "Independent Brokerage Bullets": "=• {{ $json.tailoredBullets.independentBrokerage.join('\\n\\n• ') }}",
+            "Aftersell Bullets": "=• {{ $json.tailoredBullets.aftersell.join('\\n\\n• ') }}",
+            "Garage Direct Bullets": "=• {{ $json.tailoredBullets.garageDirect.join('\\n\\n• ') }}",
+            "Loocrum Bullets": "=• {{ $json.tailoredBullets.loocrum.join('\\n\\n• ') }}",
+            "SWE Internships Bullets": "=• {{ $json.tailoredBullets.sweInternships.join('\\n\\n• ') }}",
+            "Technical Stack": "={{ $json.tailoredSkills.technicalStack }}",
+            "Revenue/GTM Stack": "={{ $json.tailoredSkills.revenueGtmStack }}"
+          },
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Workplace Type",
+              "displayName": "Workplace Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Remote",
+                  "value": "Remote"
+                },
+                {
+                  "name": "Hybrid",
+                  "value": "Hybrid"
+                },
+                {
+                  "name": "On-Site",
+                  "value": "On-Site"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Fit Score",
+              "displayName": "Fit Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Priority Tier",
+              "displayName": "Priority Tier",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Tier 1",
+                  "value": "Tier 1"
+                },
+                {
+                  "name": "Tier 2",
+                  "value": "Tier 2"
+                },
+                {
+                  "name": "Reject",
+                  "value": "Reject"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Priority Score",
+              "displayName": "Outbound Priority Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Evaluation Reasoning",
+              "displayName": "Evaluation Reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Tailored Resume Link",
+              "displayName": "Tailored Resume Link",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "ATS Status",
+              "displayName": "ATS Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Needs Application",
+                  "value": "Needs Application"
+                },
+                {
+                  "name": "Applied",
+                  "value": "Applied"
+                },
+                {
+                  "name": "N/A",
+                  "value": "N/A"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Status",
+              "displayName": "Outbound Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Queued",
+                  "value": "Queued"
+                },
+                {
+                  "name": "Auto-Dispatched",
+                  "value": "Auto-Dispatched"
+                },
+                {
+                  "name": "Replied",
+                  "value": "Replied"
+                },
+                {
+                  "name": "Bypassed (Tier 2)",
+                  "value": "Bypassed (Tier 2)"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Contacts",
+              "displayName": "Contacts",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Custom Cover Letter",
+              "displayName": "Custom Cover Letter",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Independent Brokerage Bullets",
+              "displayName": "Independent Brokerage Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Aftersell Bullets",
+              "displayName": "Aftersell Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Garage Direct Bullets",
+              "displayName": "Garage Direct Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Loocrum Bullets",
+              "displayName": "Loocrum Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "SWE Internships Bullets",
+              "displayName": "SWE Internships Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Technical Stack",
+              "displayName": "Technical Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Revenue/GTM Stack",
+              "displayName": "Revenue/GTM Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        2496,
+        -304
+      ],
+      "id": "d5b80570-fa21-4e99-90ee-f3fff85c362e",
+      "name": "Update Records with Tailored Bullets",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "YOUR_AIRTABLE_ACCOUNT",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list",
+          "cachedResultName": "Tech Sales/SE Engine",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_JOBS_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "Jobs",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_JOBS_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $json.name ? $json.name.split(' ')[0] : '' }}",
+            "Tailored Resume Link": "={{ $json.webViewLink }}",
+            "Outbound Status": "Queued"
+          },
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Workplace Type",
+              "displayName": "Workplace Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Remote",
+                  "value": "Remote"
+                },
+                {
+                  "name": "Hybrid",
+                  "value": "Hybrid"
+                },
+                {
+                  "name": "On-Site",
+                  "value": "On-Site"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Fit Score",
+              "displayName": "Fit Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Priority Tier",
+              "displayName": "Priority Tier",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Tier 1",
+                  "value": "Tier 1"
+                },
+                {
+                  "name": "Tier 2",
+                  "value": "Tier 2"
+                },
+                {
+                  "name": "Reject",
+                  "value": "Reject"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Evaluation Reasoning",
+              "displayName": "Evaluation Reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Tailored Resume Link",
+              "displayName": "Tailored Resume Link",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "ATS Status",
+              "displayName": "ATS Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Needs Application",
+                  "value": "Needs Application"
+                },
+                {
+                  "name": "Applied",
+                  "value": "Applied"
+                },
+                {
+                  "name": "N/A",
+                  "value": "N/A"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Status",
+              "displayName": "Outbound Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Queued",
+                  "value": "Queued"
+                },
+                {
+                  "name": "Auto-Dispatched",
+                  "value": "Auto-Dispatched"
+                },
+                {
+                  "name": "Replied",
+                  "value": "Replied"
+                },
+                {
+                  "name": "Bypassed (Tier 2)",
+                  "value": "Bypassed (Tier 2)"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Awaiting Approval",
+                  "value": "Awaiting Approval"
+                },
+                {
+                  "name": "Outbound Queued",
+                  "value": "Outbound Queued"
+                },
+                {
+                  "name": "Contacted",
+                  "value": "Contacted"
+                },
+                {
+                  "name": "Rejected",
+                  "value": "Rejected"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Priority Score",
+              "displayName": "Outbound Priority Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Contacts",
+              "displayName": "Contacts",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Independent Brokerage Bullets",
+              "displayName": "Independent Brokerage Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Aftersell Bullets",
+              "displayName": "Aftersell Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Garage Direct Bullets",
+              "displayName": "Garage Direct Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Loocrum Bullets",
+              "displayName": "Loocrum Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "SWE Internships Bullets",
+              "displayName": "SWE Internships Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Technical Stack",
+              "displayName": "Technical Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Revenue/GTM Stack",
+              "displayName": "Revenue/GTM Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Custom Cover Letter",
+              "displayName": "Custom Cover Letter",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        3392,
+        -304
+      ],
+      "id": "4341fb63-8422-4a76-b9a3-8ac407154fd2",
+      "name": "Update Records with Resume Cloud Link",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "YOUR_AIRTABLE_ACCOUNT",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n\n  // Grab fields from Airtable output (or raw item fallback)\n\n  const fields = item.json.fields || item.json;\n\n\n\n  // Helper function: Splits multiline strings into arrays, removes bullet symbols, and strips trailing periods\n\n  const parseBullets = (input) => {\n\n    let rawArr = [];\n\n    if (Array.isArray(input)) {\n\n      rawArr = input;\n\n    } else if (typeof input === 'string') {\n\n      rawArr = input\n\n        .split('\\n')\n\n        .map(b => b.replace(/^[•\\-\\*\\s]+/, '').trim())\n\n        .filter(b => b.length > 0);\n\n    }\n\n    // Ensure bullets never end with periods (rule: bullet points that start with a black dot should never end with periods)\n\n    return rawArr.map(b => b.replace(/\\.$/, '').trim());\n\n  };\n\n\n\n  // Helper function to safely truncate skills by word boundary without leaving trailing commas\n\n  const formatSkillsString = (str) => {\n\n    if (!str) return \"\";\n\n    let trimmed = str.trim();\n\n    if (trimmed.length <= 55) return trimmed.replace(/,\\s*$/, '');\n\n    \n\n    let sliced = trimmed.substring(0, 55);\n\n    const lastComma = sliced.lastIndexOf(',');\n\n    if (lastComma > 0) {\n\n      sliced = sliced.substring(0, lastComma);\n\n    } else {\n\n      const lastSpace = sliced.lastIndexOf(' ');\n\n      if (lastSpace > 0) sliced = sliced.substring(0, lastSpace);\n\n    }\n\n    return sliced.replace(/,\\s*$/, '').trim();\n\n  };\n\n\n\n  // 1. Extract and parse bullet arrays\n\n  const rltBullets = parseBullets(fields[\"Independent Brokerage Bullets\"] || fields[\"independentBrokerage\"]);\n\n  const aftersellBullets = parseBullets(fields[\"Aftersell Bullets\"] || fields[\"aftersell\"]);\n\n  const garageBullets = parseBullets(fields[\"Garage Direct Bullets\"] || fields[\"garageDirect\"]);\n\n  const loocrumBullets = parseBullets(fields[\"Loocrum Bullets\"] || fields[\"loocrum\"]);\n\n  const internBullets = parseBullets(fields[\"SWE Internships Bullets\"] || fields[\"sweInternships\"]);\n\n\n\n  // Processed safe skills with trimming guard\n\n  const rawTech = fields[\"Technical Stack\"] || fields[\"technicalStack\"] || item.json.tailoredSkills?.technicalStack || \"Java, Python, C++, JavaScript, HTML, CSS, SQL\";\n\n  const rawRev = fields[\"Revenue/GTM Stack\"] || fields[\"revenueGtmStack\"] || item.json.tailoredSkills?.revenueGtmStack || \"Hubspot, Clay, Cursor, Shopify, Meta, Google, Klaviyo\";\n\n\n\n  // 2. Static Resume Base Data (Company summaries maintain periods per rule)\n\n  const staticData = {\n\n    fullName: \"YOUR_NAME\",\n\n    linkedinUrl: \"https://linkedin.com/in/YOUR_LINKEDIN\",\n\n    linkedinDisplay: \"Linkedin.com/in/YOUR_LINKEDIN\",\n\n    phoneTel: \"+10000000000\",\n\n    phoneDisplay: \"000-000-0000\",\n\n    email: \"YOUR_EMAIL@example.com\",\n\n\n\n    rltCompany: \"Independent Brokerage\",\n\n    rltTitle: \"Broker, RLT Vertical\",\n\n    rltLocation: \"Toronto, CA (remote)\",\n\n    rltDates: \"Jan 2026-Present\",\n\n    rltSummary: \"Brokered refurbished tanning beds/booths; transitioning into commercial red light therapy vertical systems.\",\n\n\n\n    aftersellCompany: \"Aftersell by Rokt\",\n\n    aftersellTitle: \"GTM Associate (Inbound Sales)\",\n\n    aftersellLocation: \"Toronto, CA (hybrid)\",\n\n    aftersellDates: \"Jan 2025-Dec 2025\",\n\n    aftersellSummary: \"Worked for B2B e-commerce SaaS platform focused on post-purchase monetization for Shopify merchants.\",\n\n\n\n    garageCompany: \"Garage Direct Online\",\n\n    garageTitle: \"President, SMB Account Executive\",\n\n    garageLocation: \"Sheridan, WY (remote)\",\n\n    garageDates: \"Oct 2023-Sep 2024\",\n\n    garageSummary: \"Distributed freight-heavy, bulk products to transform residential & commercial garage spaces in North America.\",\n\n\n\n    loocrumCompany: \"Loocrum\",\n\n    loocrumTitle: \"Growth Lead, Digital & Enterprise Sales\",\n\n    loocrumLocation: \"Toronto, CA (hybrid)\",\n\n    loocrumDates: \"Jan 2023-Sep 2023\",\n\n    loocrumSummary: \"B2B client acquisition growth agency specializing in paid advertising and search engine optimization.\",\n\n\n\n    internCompany: \"Various Companies\",\n\n    internTitle: \"Software Engineer Intern\",\n\n    internLocation: \"Across Canada (onsite; hybrid; remote)\",\n\n    internDates: \"Jan 2017-Apr 2020\",\n\n    internSummary: \"Enrolled in co-op program, each internship lasted about 4 months each.\",\n\n    internSubhead: \"Some highlights I worked on:\",\n\n\n\n    internBullet1Company: \"Capco\",\n\n    internBullet2Company: \"Rangle.io\",\n\n    internBullet3Company: \"Enlighted\",\n\n    internBullet4Company: \"American Express\",\n\n    internBullet5Company: \"SMART Technologies\",\n\n    internBullet6Company: \"5Crowd\",\n\n\n\n    eduSchool: \"University of Waterloo\",\n\n    eduDegree: \"Bachelor of Computer Science with Business Option\",\n\n    eduLocation: \"Waterloo, CA\",\n\n    eduDates: \"Graduated Oct 2023\",\n\n\n\n    skillsGtm: \"Lead Generation, Prospecting, Consultative Selling, Strategic Planning, Market Research, Data Analysis\",\n\n    skillsRevenue: formatSkillsString(rawRev),\n\n    skillsTechnical: formatSkillsString(rawTech),\n\n    skillsInterests: \"Direct Response Copywriting, Consumer Psychology, Hiking, Badminton, Catan, Poker\"\n\n  };\n\n\n\n  const getBullet = (arr, index) => arr[index] || \"\";\n\n\n\n  // 3. Dynamic Bullet Mapping\n\n  const dynamicBullets = {\n\n    rltBullet1: getBullet(rltBullets, 0),\n\n    rltBullet2: getBullet(rltBullets, 1),\n\n    rltBullet3: getBullet(rltBullets, 2),\n\n    rltBullet4: getBullet(rltBullets, 3),\n\n\n\n    aftersellBullet1: getBullet(aftersellBullets, 0),\n\n    aftersellBullet2: getBullet(aftersellBullets, 1),\n\n    aftersellBullet3: getBullet(aftersellBullets, 2),\n\n    aftersellBullet4: getBullet(aftersellBullets, 3),\n\n    aftersellBullet5: getBullet(aftersellBullets, 4),\n\n\n\n    garageBullet1: getBullet(garageBullets, 0),\n\n    garageBullet2: getBullet(garageBullets, 1),\n\n    garageBullet3: getBullet(garageBullets, 2),\n\n\n\n    loocrumBullet1: getBullet(loocrumBullets, 0),\n\n    loocrumBullet2: getBullet(loocrumBullets, 1),\n\n    loocrumBullet3: getBullet(loocrumBullets, 2),\n\n\n\n    internBullet1: getBullet(internBullets, 0),\n\n    internBullet2: getBullet(internBullets, 1),\n\n    internBullet3: getBullet(internBullets, 2),\n\n    internBullet4: getBullet(internBullets, 3),\n\n    internBullet5: getBullet(internBullets, 4),\n\n    internBullet6: getBullet(internBullets, 5)\n\n  };\n\n\n\n  const context = {\n\n    ...staticData,\n\n    ...dynamicBullets,\n\n    customCoverLetter: fields[\"Custom Cover Letter\"] || fields[\"customCoverLetter\"] || \"\"\n\n  };\n\n\n\n  // 4. HTML Template with Skill Wrapping Fixes\n\n  let html = `<!DOCTYPE html>\n\n<html lang=\"en\">\n\n<head>\n\n  <meta charset=\"UTF-8\" />\n\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n\n  <title>{{fullName}} — Resume</title>\n\n  <link rel=\"preconnect\" href=\"https://fonts.googleapis.com\" />\n\n  <link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin />\n\n  <link href=\"https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap\" rel=\"stylesheet\" />\n\n  <style>\n\n    @page {\n\n      size: letter;\n\n      margin: 0.5in;\n\n    }\n\n\n\n    :root {\n\n      --ink: #000;\n\n      --rule: #000;\n\n      --font: Garamond, \"EB Garamond\", \"Palatino Linotype\", Palatino, serif;\n\n    }\n\n\n\n    * {\n\n      box-sizing: border-box;\n\n      margin: 0;\n\n      padding: 0;\n\n    }\n\n\n\n    html, body {\n\n      background: #ffffff !important;\n\n      color: var(--ink);\n\n      font-family: var(--font);\n\n      font-size: 10pt;\n\n      line-height: 1.22;\n\n      -webkit-font-smoothing: antialiased;\n\n    }\n\n\n\n    .page {\n\n      width: 100%;\n\n      height: 100%;\n\n      margin: 0;\n\n      padding: 0;\n\n      background: #fff;\n\n    }\n\n\n\n    header {\n\n      text-align: center;\n\n      margin-bottom: 8px;\n\n    }\n\n\n\n    header h1 {\n\n      font-family: var(--font);\n\n      font-size: 22pt;\n\n      font-weight: 700;\n\n      letter-spacing: 0.02em;\n\n      line-height: 1.05;\n\n      text-transform: uppercase;\n\n    }\n\n\n\n    .contact {\n\n      margin-top: 3px;\n\n      font-size: 10pt;\n\n      font-weight: 400;\n\n    }\n\n\n\n    .contact a {\n\n      color: inherit;\n\n      text-decoration: none;\n\n    }\n\n\n\n    section {\n\n      margin-top: 8px;\n\n    }\n\n\n\n    .section-title {\n\n      font-family: var(--font);\n\n      font-size: 11pt;\n\n      font-weight: 700;\n\n      letter-spacing: 0.04em;\n\n      text-transform: uppercase;\n\n      border-bottom: 1px solid var(--rule);\n\n      padding-bottom: 1px;\n\n      margin-bottom: 5px;\n\n      line-height: 1.15;\n\n    }\n\n\n\n    .entry {\n\n      margin-bottom: 6px;\n\n    }\n\n\n\n    .entry:last-child {\n\n      margin-bottom: 0;\n\n    }\n\n\n\n    .entry-header {\n\n      display: flex;\n\n      justify-content: space-between;\n\n      align-items: baseline;\n\n      gap: 10px;\n\n    }\n\n\n\n    .entry-left {\n\n      flex: 1 1 auto;\n\n      min-width: 0;\n\n      font-weight: 400;\n\n    }\n\n\n\n    .entry-left .role {\n\n      font-weight: 700;\n\n    }\n\n\n\n    .entry-dates {\n\n      flex: 0 0 auto;\n\n      white-space: nowrap;\n\n      font-weight: 400;\n\n      text-align: right;\n\n    }\n\n\n\n    .entry-summary {\n\n      margin-top: 1px;\n\n      margin-bottom: 4px;\n\n      font-weight: 400;\n\n      font-size: 9.8pt;\n\n    }\n\n\n\n    .bullets {\n\n      margin: 0;\n\n      padding-left: 0;\n\n      list-style-type: none;\n\n    }\n\n\n\n    .bullets li {\n\n      position: relative;\n\n      margin: 1px 0;\n\n      padding-left: 1.2em;\n\n      white-space: nowrap;\n\n      overflow: hidden;\n\n      text-overflow: ellipsis;\n\n      max-width: 100%;\n\n    }\n\n\n\n    .bullets li::before {\n\n      content: \"•\";\n\n      position: absolute;\n\n      left: 0.3em;\n\n      top: 0;\n\n      font-size: 1.0em;\n\n      line-height: 1;\n\n      color: var(--ink);\n\n    }\n\n\n\n    /* SPECIFIC FIX FOR SKILLS SECTION: Allow text wrapping so skills don't clip */\n\n    .skills-list {\n\n      margin: 0;\n\n      padding-left: 0;\n\n      list-style-type: none;\n\n    }\n\n\n\n    .skills-list li {\n\n      position: relative;\n\n      margin: 2px 0;\n\n      padding-left: 1.2em;\n\n      white-space: normal !important; /* Allow wrapping */\n\n      overflow: visible !important;\n\n    }\n\n\n\n    .skills-list li::before {\n\n      content: \"•\";\n\n      position: absolute;\n\n      left: 0.3em;\n\n      top: 0;\n\n      font-size: 1.0em;\n\n      line-height: 1;\n\n      color: var(--ink);\n\n    }\n\n\n\n    .subhead {\n\n      margin: 2px 0 1px;\n\n      font-weight: 400;\n\n      text-decoration: underline;\n\n      font-size: 9.8pt;\n\n    }\n\n\n\n    .company-tag {\n\n      font-weight: 700;\n\n    }\n\n\n\n    .skills .label {\n\n      font-weight: 700;\n\n    }\n\n\n\n    @media print {\n\n      html, body {\n\n        background: #fff !important;\n\n      }\n\n    }\n\n  </style>\n\n</head>\n\n<body>\n\n  <main class=\"page\">\n\n    <header>\n\n      <h1>{{fullName}}</h1>\n\n      <p class=\"contact\">\n\n        <a href=\"{{linkedinUrl}}\">{{linkedinDisplay}}</a>\n\n        &nbsp;|&nbsp;\n\n        <a href=\"tel:{{phoneTel}}\">{{phoneDisplay}}</a>\n\n        &nbsp;|&nbsp;\n\n        <a href=\"mailto:{{email}}\">{{email}}</a>\n\n      </p>\n\n    </header>\n\n\n\n    <section>\n\n      <h2 class=\"section-title\">Professional Experience</h2>\n\n\n\n      <article class=\"entry\">\n\n        <div class=\"entry-header\">\n\n          <p class=\"entry-left\"><span class=\"role\">{{rltCompany}} – {{rltTitle}}</span> | {{rltLocation}}</p>\n\n          <p class=\"entry-dates\">{{rltDates}}</p>\n\n        </div>\n\n        <p class=\"entry-summary\">{{rltSummary}}</p>\n\n        <ul class=\"bullets\">\n\n          <li>{{rltBullet1}}</li>\n\n          <li>{{rltBullet2}}</li>\n\n          <li>{{rltBullet3}}</li>\n\n          <li>{{rltBullet4}}</li>\n\n        </ul>\n\n      </article>\n\n\n\n      <article class=\"entry\">\n\n        <div class=\"entry-header\">\n\n          <p class=\"entry-left\"><span class=\"role\">{{aftersellCompany}} – {{aftersellTitle}}</span> | {{aftersellLocation}}</p>\n\n          <p class=\"entry-dates\">{{aftersellDates}}</p>\n\n        </div>\n\n        <p class=\"entry-summary\">{{aftersellSummary}}</p>\n\n        <ul class=\"bullets\">\n\n          <li>{{aftersellBullet1}}</li>\n\n          <li>{{aftersellBullet2}}</li>\n\n          <li>{{aftersellBullet3}}</li>\n\n          <li>{{aftersellBullet4}}</li>\n\n          <li>{{aftersellBullet5}}</li>\n\n        </ul>\n\n      </article>\n\n\n\n      <article class=\"entry\">\n\n        <div class=\"entry-header\">\n\n          <p class=\"entry-left\"><span class=\"role\">{{garageCompany}} – {{garageTitle}}</span> | {{garageLocation}}</p>\n\n          <p class=\"entry-dates\">{{garageDates}}</p>\n\n        </div>\n\n        <p class=\"entry-summary\">{{garageSummary}}</p>\n\n        <ul class=\"bullets\">\n\n          <li>{{garageBullet1}}</li>\n\n          <li>{{garageBullet2}}</li>\n\n          <li>{{garageBullet3}}</li>\n\n        </ul>\n\n      </article>\n\n\n\n      <article class=\"entry\">\n\n        <div class=\"entry-header\">\n\n          <p class=\"entry-left\"><span class=\"role\">{{loocrumCompany}} – {{loocrumTitle}}</span> | {{loocrumLocation}}</p>\n\n          <p class=\"entry-dates\">{{loocrumDates}}</p>\n\n        </div>\n\n        <p class=\"entry-summary\">{{loocrumSummary}}</p>\n\n        <ul class=\"bullets\">\n\n          <li>{{loocrumBullet1}}</li>\n\n          <li>{{loocrumBullet2}}</li>\n\n          <li>{{loocrumBullet3}}</li>\n\n        </ul>\n\n      </article>\n\n\n\n      <article class=\"entry\">\n\n        <div class=\"entry-header\">\n\n          <p class=\"entry-left\"><span class=\"role\">{{internCompany}} – {{internTitle}}</span> | {{internLocation}}</p>\n\n          <p class=\"entry-dates\">{{internDates}}</p>\n\n        </div>\n\n        <p class=\"entry-summary\">{{internSummary}}</p>\n\n        <p class=\"subhead\">{{internSubhead}}</p>\n\n        <ul class=\"bullets\">\n\n          <li><span class=\"company-tag\">{{internBullet1Company}}</span>: {{internBullet1}}</li>\n\n          <li><span class=\"company-tag\">{{internBullet2Company}}</span>: {{internBullet2}}</li>\n\n          <li><span class=\"company-tag\">{{internBullet3Company}}</span>: {{internBullet3}}</li>\n\n          <li><span class=\"company-tag\">{{internBullet4Company}}</span>: {{internBullet4}}</li>\n\n          <li><span class=\"company-tag\">{{internBullet5Company}}</span>: {{internBullet5}}</li>\n\n          <li><span class=\"company-tag\">{{internBullet6Company}}</span>: {{internBullet6}}</li>\n\n        </ul>\n\n      </article>\n\n    </section>\n\n\n\n    <section>\n\n      <h2 class=\"section-title\">Education</h2>\n\n      <article class=\"entry\">\n\n        <div class=\"entry-header\">\n\n          <p class=\"entry-left\"><span class=\"role\">{{eduSchool}} – {{eduDegree}}</span> | {{eduLocation}}</p>\n\n          <p class=\"entry-dates\">{{eduDates}}</p>\n\n        </div>\n\n      </article>\n\n    </section>\n\n\n\n    <section class=\"skills\">\n\n      <h2 class=\"section-title\">Additional</h2>\n\n      <ul class=\"skills-list\">\n\n        <li><span class=\"label\">GTM:</span> {{skillsGtm}}</li>\n\n        <li><span class=\"label\">Revenue Tools:</span> {{skillsRevenue}}</li>\n\n        <li><span class=\"label\">Technical:</span> {{skillsTechnical}}</li>\n\n        <li><span class=\"label\">Interests:</span> {{skillsInterests}}</li>\n\n      </ul>\n\n    </section>\n\n  </main>\n\n</body>\n\n</html>`;\n\n\n\n  // 5. Safe Substitution\n\n  for (const [key, val] of Object.entries(context)) {\n\n    const regex = new RegExp(`{{\\\\s*${key}\\\\s*}}`, 'g');\n\n    html = html.replace(regex, () => String(val));\n\n  }\n\n\n\n  // 6. Output Result Payload\n\n  item.json.renderedHtml = html;\n\n  item.json.customCoverLetter = context.customCoverLetter;\n\n}\n\n\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        -304
+      ],
+      "id": "a470403e-d45d-4bc2-9354-2155af4568a5",
+      "name": "Format into HTML Resume"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list",
+          "cachedResultName": "Tech Sales Engine",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_JOBS_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "Jobs",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID/YOUR_AIRTABLE_JOBS_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $('Preferred Job Titles Filter Only').item.json.id }}",
+            "Company": "={{ $('Preferred Job Titles Filter Only').item.json.companyName }}",
+            "Job Title": "={{ $('Preferred Job Titles Filter Only').item.json.title }}",
+            "Location": "={{ $('Preferred Job Titles Filter Only').item.json.location }}",
+            "Workplace Type": "={{ $('Preferred Job Titles Filter Only').item.json.workplaceTypeNormalized }}",
+            "URL": "={{ $('Preferred Job Titles Filter Only').item.json.link }}",
+            "Fit Score": "={{ JSON.parse($('Calculate Job Fit').item.json.text).fitScore }}",
+            "Priority Tier": "={{ JSON.parse($('Calculate Job Fit').item.json.text).priorityTier }}",
+            "Evaluation Reasoning": "={{ JSON.parse($('Calculate Job Fit').item.json.text).reasoning }}",
+            "Job Description": "={{ $('Preferred Job Titles Filter Only').item.json.descriptionText }}",
+            "Company Domain": "={{ $('Preferred Job Titles Filter Only').item.json.companyWebsite ? $('Preferred Job Titles Filter Only').item.json.companyWebsite.replace(/https?:\\/\\//i, '').replace(/^www\\./i, '').split('/')[0] : '' }}"
+          },
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company Domain",
+              "displayName": "Company Domain",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Job Description",
+              "displayName": "Job Description",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority Tier",
+              "displayName": "Priority Tier",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Tier 1",
+                  "value": "Tier 1"
+                },
+                {
+                  "name": "Tier 2",
+                  "value": "Tier 2"
+                },
+                {
+                  "name": "Reject",
+                  "value": "Reject"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Workplace Type",
+              "displayName": "Workplace Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Remote",
+                  "value": "Remote"
+                },
+                {
+                  "name": "Hybrid",
+                  "value": "Hybrid"
+                },
+                {
+                  "name": "On-Site",
+                  "value": "On-Site"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Created",
+              "displayName": "Created",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Fit Score",
+              "displayName": "Fit Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Outbound Priority Score",
+              "displayName": "Outbound Priority Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Evaluation Reasoning",
+              "displayName": "Evaluation Reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Tailored Resume Link",
+              "displayName": "Tailored Resume Link",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "ATS Status",
+              "displayName": "ATS Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Needs Application",
+                  "value": "Needs Application"
+                },
+                {
+                  "name": "Applied",
+                  "value": "Applied"
+                },
+                {
+                  "name": "N/A",
+                  "value": "N/A"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Status",
+              "displayName": "Outbound Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Queued",
+                  "value": "Queued"
+                },
+                {
+                  "name": "Auto-Dispatched",
+                  "value": "Auto-Dispatched"
+                },
+                {
+                  "name": "Replied",
+                  "value": "Replied"
+                },
+                {
+                  "name": "Bypassed (Tier 2)",
+                  "value": "Bypassed (Tier 2)"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Contacts",
+              "displayName": "Contacts",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "array",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Name (from Contacts)",
+              "displayName": "Name (from Contacts)",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Custom Cover Letter",
+              "displayName": "Custom Cover Letter",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Independent Brokerage Bullets",
+              "displayName": "Independent Brokerage Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Aftersell Bullets",
+              "displayName": "Aftersell Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Garage Direct Bullets",
+              "displayName": "Garage Direct Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Loocrum Bullets",
+              "displayName": "Loocrum Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "SWE Internships Bullets",
+              "displayName": "SWE Internships Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Technical Stack",
+              "displayName": "Technical Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Revenue/GTM Stack",
+              "displayName": "Revenue/GTM Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Last Modified",
+              "displayName": "Last Modified",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Contacts 2",
+              "displayName": "Contacts 2",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Contacts 3",
+              "displayName": "Contacts 3",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Contacts 4",
+              "displayName": "Contacts 4",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "array",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        1504,
+        0
+      ],
+      "id": "b899160d-fd5a-4632-ab25-d40995ea38c9",
+      "name": "Create New Job Record",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "YOUR_AIRTABLE_ACCOUNT",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.prospeo.io/search-person",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-key",
+              "value": "YOUR_PROSPEO_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"page\": 1,\n  \"per_page\": 5,\n  \"filters\": {\n    \"company\": {\n      \"websites\": {\n        \"include\": [\n          \"{{ $json.companyDomain }}\"\n        ]\n      }\n    },\n    \"person_job_title\": {\n      \"include\": [\n        \"VP of Sales\", \"Vice President of Sales\",\n        \"VP of Solutions Engineering\", \"VP of Pre-Sales\",\n        \"Director of Sales\", \"Director of Solutions Engineering\", \"Director of Pre-Sales\",\n        \"Head of Sales\", \"Head of Solutions Engineering\", \"Head of Pre-Sales\",\n        \"Chief Revenue Officer\", \"CRO\",\n        \"Sales Manager\", \"Solutions Engineering Manager\", \"Pre-Sales Manager\",\n        \"Recruiter\", \"Technical Recruiter\", \"Talent Acquisition\", \"Talent Acquisition Manager\",\n        \"Senior Solutions Engineer\", \"Solutions Engineer\", \"Pre-Sales Consultant\",\n        \"Solutions Consultant\", \"Sales Engineer\", \"Value Engineer\", \"Enterprise Account Executive\"\n      ]\n    }\n  }\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3856,
+        -304
+      ],
+      "id": "a38d1d5f-a24b-4ede-84ae-05d6d6003729",
+      "name": "Find DMs with Root Domain via Prospeo",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const finalContacts = [];\n\n// 1. Reference the parent jobs node\nconst parentJobsNode = $('Data Transfer from T1 to T2');\n\n// 2. Loop through each Prospeo search item\n$input.all().forEach((item, index) => {\n  let parentJob = null;\n  try {\n    parentJob = parentJobsNode.itemMatching(index)?.json;\n  } catch (e) {\n    parentJob = parentJobsNode.all()[index]?.json;\n  }\n\n  const parentJobFields = parentJob?.fields || parentJob || {};\n\n  // Safe extraction of parent job fields\n  const parentJobRecordId = parentJob?.id || parentJobFields?.id || '';\n  const parentJobTitle = parentJobFields['Job Title'] || parentJob?.targetJobTitle || parentJob?.title || 'Target Job';\n  const parentCompany = parentJobFields['Company'] || parentJob?.companyName || 'Target Company';\n  const parentResumeUrl = parentJobFields['Tailored Resume Link'] || parentJob?.resumePdfUrl || '';\n  \n  // EXTRACT JOB DESCRIPTION SO IT FLOWS DOWNSTREAM TO CREATE NEW CONTACT & GEMINI:\n  const parentJobDescription = parentJobFields['Job Description'] || \n                               parentJobFields['descriptionText'] || \n                               parentJobFields['Description'] || \n                               parentJob?.descriptionText || \n                               parentJob?.description || '';\n\n  // Prospeo search results array\n  const people = item.json.results || item.json.response?.results || item.json.response?.body?.response?.results || [];\n\n  let hiringManager = null;\n  let recruiter = null;\n  let peerIC = null;\n\n  const hmTitles = ['vp', 'vice president', 'director', 'head of', 'cro', 'chief revenue', 'lead', 'manager', 'president'];\n  const recruiterTitles = ['recruiter', 'talent', 'acquisition', 'sourcer', 'people', 'hr'];\n  const peerTitles = ['solutions engineer', 'sales engineer', 'pre-sales', 'presales', 'solutions consultant', 'account executive', 'value engineer', 'architect'];\n\n  const selectedTitles = new Set();\n\n  for (const result of people) {\n    const person = result.person || result;\n    const company = result.company || {};\n    \n    // 🔴 ADDED: Check Prospeo's email status and block if not VERIFIED\n    const emailData = result.email || person.email || {};\n    const emailStatus = String(emailData.status || result.email_status || person.email_status || '').toUpperCase();\n    const isVerified = emailStatus === 'VERIFIED';\n\n    if (!isVerified) {\n      continue; // Skip contacts that do not have a verified email status\n    }\n\n    const title = String(person.current_job_title || person.title || '').toLowerCase().trim();\n\n    // 1. Hiring Manager\n    if (!hiringManager && hmTitles.some(k => title.includes(k)) && !recruiterTitles.some(k => title.includes(k))) {\n      if (!selectedTitles.has(title)) {\n        hiringManager = { ...person, company, emailData, personaType: 'Hiring Manager' };\n        selectedTitles.add(title);\n        continue;\n      }\n    }\n\n    // 2. Recruiter\n    if (!recruiter && recruiterTitles.some(k => title.includes(k))) {\n      if (!selectedTitles.has(title)) {\n        recruiter = { ...person, company, emailData, personaType: 'Recruiter' };\n        selectedTitles.add(title);\n        continue;\n      }\n    }\n\n    // 3. Peer IC\n    if (!peerIC && peerTitles.some(k => title.includes(k)) && !hmTitles.some(k => title.includes(k))) {\n      if (!selectedTitles.has(title)) {\n        peerIC = { ...person, company, emailData, personaType: 'Peer IC' };\n        selectedTitles.add(title);\n        continue;\n      }\n    }\n\n    if (hiringManager && recruiter && peerIC) break;\n  }\n\n  const matched = [hiringManager, recruiter, peerIC].filter(Boolean);\n\n  for (const c of matched) {\n    finalContacts.push({\n      json: {\n        prospeoId: c.person_id || c.id,\n        name: c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim(),\n        title: c.current_job_title || c.title,\n        personaType: c.personaType,\n        linkedinUrl: c.linkedin_url || '',\n        companyWebsite: c.company?.company_website || c.company?.website || '',\n        organization: c.company?.company_name || c.company?.name || parentCompany,\n        email: c.emailData?.email || c.email || c.person_email || '',\n        emailStatus: c.emailData?.status || 'VERIFIED',\n\n        // PASSED DIRECTLY ON EVERY CONTACT PAYLOAD FOR AIRTABLE & GEMINI:\n        jobRecordId: parentJobRecordId,\n        targetJobTitle: parentJobTitle,\n        companyName: parentCompany,\n        resumePdfUrl: parentResumeUrl,\n        jobDescription: parentJobDescription // <--- ACCESSIBLE DIRECTLY BY $json.jobDescription\n      }\n    });\n  }\n});\n\nreturn finalContacts;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4112,
+        -400
+      ],
+      "id": "9122db48-626b-4200-94b6-69350f703347",
+      "name": "Find the Correct DM1",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4912,
+        -240
+      ],
+      "id": "73865061-4f45-4434-80af-42aafca60afd",
+      "name": "Instantly Email Tailor1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GEMINI_ACCOUNT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert technical sales recruiter and executive outbound copywriting strategist. Your job is to analyze a target Job Description (JD) and a specific target prospect's Title/Persona, then generate a hyper-personalized, high-converting \"pitchHook\" and \"callToAction\" (CTA) for outbound cold email outreach.\n\nCANDIDATE BACKSTORY & CONCRETE METRICS (STRICT NO-HALLUCINATION):\n- Education: UWaterloo CS Degree with Business Option (Graduated Oct 2023).\n- Technical Capabilities: REST APIs, Webhooks, Python, SQL, JavaScript, CRUD Architectures, Automated Data Pipelines, Cursor, Clay, HTML/CSS.\n- Recent Track Record: \n  * Aftersell by Rokt: Exceeded quota (110% Q2 '25, 130% Q3 '25); owned inbound GTM across 4 SaaS lines; drove ~5x base salary in influenced pipeline; sub-20-min speed-to-lead.\n  * Independent Brokerage / EXCELL Red Light: Built Cursor + Clay outbound engines; closed ~$40k TCV; sourced 15-30 opps/mo; 100 daily cold calls.\n  * Garage Direct Online: Scaled $0 to $50k MRR in 6 months; $1MM+ hybrid sales opps; 15+ C-level partnerships.\n  * Loocrum: Drove $4.7MM+ top-line client revenue; 15+ e-commerce clients; 30-55% client recurring revenue growth.\n\nCOPYWRITING, TONE & ANTI-AI DIRECTIVES:\n1. STRICT NO NAMES OR GREETINGS: Do NOT include ANY greetings, salutations, or prospect names (NO \"Hi John,\", NO \"John,\") inside pitchHook or callToAction. Start IMMEDIATELY with the first word of the value proposition sentence. The email template handles greetings.\n2. NATURAL HUMAN CONVERSATIONAL TONE:\n   - pitchHook MUST be EXACTLY ONE (1) fluid, easy-to-read sentence (max 25-30 words).\n   - BANNED: NO em-dashes (—), NO long complex sentences with multiple semicolons, NO buzzwords like \"spearhead\", \"synergy\", or \"leveraging\".\n   - Naturally acknowledge the open hiring position at the beginning of the pitchHook so the outreach feels immediate and relevant.\n\nPERSONA CLASSIFICATION RULE:\nIf Persona Type is missing or undefined, classify Target Prospect Title as follows:\n- HIRING MANAGER: Titles containing VP, Vice President, Director, Head of, Sales Manager, Chief Revenue Officer, CRO, Lead.\n- RECRUITER: Titles containing Recruiter, Talent Acquisition, Sourcer, People, HR.\n- PEER IC: Titles containing Solutions Engineer, Sales Engineer, Account Executive, Pre-Sales, Solutions Consultant.\n\nPERSONA COPYWRITING RULES:\n1. HIRING MANAGER:\n   - pitchHook: Acknowledge the open {{ $json.fields['Target Job Title'][0] }} position at {{ $json.fields['Company Name'] }}, bridging Waterloo CS technical discovery with enterprise revenue execution ($40k TCV, 130% quota attainment at Aftersell).\n   - callToAction: Ask for a brief 10-minute introductory sync to discuss team expansion goals.\n\n2. RECRUITER / TALENT ACQUISITION:\n   - pitchHook: Acknowledge the {{ $json.fields['Target Job Title'][0] }} opening at {{ $json.fields['Company Name'] }}, highlighting core qualification match (Waterloo CS degree + proven $4.7M+ technical SE/AE revenue track record).\n   - callToAction: Ask if they are managing this role's pipeline or if you should sync with the hiring manager directly.\n\n3. PEER IC:\n   - pitchHook: Peer-to-peer technical connection noting their team's {{ $json.fields['Target Job Title'][0] }} opening at {{ $json.fields['Company Name'] }}, highlighting shared technical seller background (Waterloo CS + GTM automation).\n   - callToAction: Ask for a low-friction 10-minute virtual coffee chat to learn about team culture, territory allocation, and quota equity.\n\nINPUT METADATA:\nTarget Prospect Title: {{ $json.fields.Title }}\nPersona Type: {{ $json.fields['Persona Type'] }}\nTarget Company: {{ $json.fields['Company Name'] }}\nTarget Job Title: {{ $json.fields['Target Job Title'][0] }}\nTarget Job Description: {{ $json.fields['Job Description'] }}\n\nOUTPUT PROTOCOL (CRITICAL):\nOutput MUST be 100% valid, raw JSON without markdown code block wrapping (no ```json).\n\nOutput JSON Format:\n{\n  \"personaType\": \"<Hiring IC Manager Peer Recruiter |>\",\n  \"pitchHook\": \"<EXACTLY 1-sentence ONE directly first fluid, mentioning open proposition role, starting the value with word>\",\n  \"callToAction\": \"<EXACTLY ONE closing directly first low-friction question starting the with word>\"\n}",
+        "batching": {
+          "batchSize": 5,
+          "delayBetweenBatches": 2000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        4832,
+        -480
+      ],
+      "id": "88fca332-2b55-4caa-aba6-c3a61b6cafbd",
+      "name": "Personalized Outreach Email1",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const [index, item] of $input.all().entries()) {\n  const rawText = item.json.text || item.json.output || '';\n  const cleanedText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\n\n  // 1. Extract Email directly from 'Create New Contact' by array index\n  let email = '';\n  try {\n    const contactItem = $('Create New Contact').itemMatching(index);\n    email = contactItem?.json?.fields?.['Email'] || contactItem?.json?.email || '';\n  } catch (e) {\n    email = $('Create New Contact').all()[index]?.json?.fields?.['Email'] || \n            $('Create New Contact').all()[index]?.json?.email || '';\n  }\n\n  // 2. Attach email directly to item json so Airtable can match correctly\n  item.json.email = email;\n\n  // 3. Parse LLM JSON output safely\n  try {\n    const parsed = JSON.parse(cleanedText);\n    item.json.personaType = parsed.personaType || 'Peer IC';\n    item.json.pitchHook = parsed.pitchHook || '';\n    item.json.callToAction = parsed.callToAction || '';\n  } catch (e) {\n    // Fallback defaults if LLM output fails\n    item.json.personaType = 'Peer IC';\n    item.json.pitchHook = 'UWaterloo CS graduate with a background bridging technical discovery and B2B SaaS deal execution.';\n    item.json.callToAction = 'Would you be open to a brief 10-minute chat later this week?';\n  }\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5232,
+        -480
+      ],
+      "id": "40f77d2c-7f6c-4317-9129-f8e2bced6a25",
+      "name": "Build JSON for Email Merge Tags1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.instantly.ai/api/v2/leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_INSTANTLY_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"campaign\": \"YOUR_INSTANTLY_CAMPAIGN_ID\",\n  \"email\": \"{{ $json.fields.Email }}\",\n  \"first_name\": \"{{ $json.fields.Name ? $json.fields.Name.trim().split(/\\s+/)[0] : '' }}\",\n  \"last_name\": \"{{ $json.fields.Name && $json.fields.Name.trim().split(/\\s+/).length > 1 ? $json.fields.Name.trim().split(/\\s+/).pop() : '' }}\",\n  \"company_name\": \"{{ $json.fields['Company Name'] }}\",\n  \"custom_variables\": {\n    \"title\": \"{{ $json.fields.Title }}\",\n    \"job_title\": \"{{ $json.fields['Target Job Title'] }}\",\n    \"pitch_hook\": \"{{ $json.fields['Pitch Hook'] }}\",\n    \"call_to_action\": \"{{ $json.fields['Call to Action'] }}\",\n    \"resumePdfUrl\": \"{{ $json.fields['Tailored Resume PDF Link'] }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        5680,
+        -480
+      ],
+      "id": "6186ec5a-b772-4ee7-baf3-1066d7c032f0",
+      "name": "Add Emails into Instantly Campaign1"
+    },
+    {
+      "parameters": {
+        "maxItems": 20
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        896,
+        0
+      ],
+      "id": "540e0131-eff1-4baf-8487-6070c836efb4",
+      "name": "Limit (Testing only)",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n  // Attach the item's unique job title and resume link directly onto $json root\n  item.json.targetJobTitle = item.json.fields?.['Job Title'] || item.json.targetJobTitle;\n  item.json.resumePdfUrl = item.json.fields?.['Tailored Resume Link'] || item.json.resumePdfUrl;\n  item.json.companyName = item.json.fields?.['Company'] || item.json.companyName;\n  item.json.descriptionText = item.json.fields?.['Job Description'] || item.json.fields?.['Description'] || item.json.descriptionText || item.json.description || '';\n  \n  // Attach company domain directly onto $json root (checking fields or root fallback)\n  item.json.companyDomain = item.json.fields?.['Company Domain'] || item.json.fields?.['Domain'] || item.json.companyDomain || '';\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3616,
+        -304
+      ],
+      "id": "975f01c3-e69f-4053-9a93-8084eaa3046a",
+      "name": "Data Transfer from T1 to T2"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list",
+          "cachedResultName": "Tech Sales/SE Engine",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_CONTACTS_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "Contacts",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID/YOUR_AIRTABLE_CONTACTS_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Email": "={{ $json.email }}",
+            "Pitch Hook": "={{ $json.pitchHook }}",
+            "Call to Action": "={{ $json.callToAction }}",
+            "Instantly Campaign ID": "=YOUR_INSTANTLY_CAMPAIGN_ID"
+          },
+          "matchingColumns": [
+            "Email"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "LinkedIn URL",
+              "displayName": "LinkedIn URL",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Company Name",
+              "displayName": "Company Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Company Domain",
+              "displayName": "Company Domain",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Target Job Title",
+              "displayName": "Target Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Jobs",
+              "displayName": "Jobs",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Persona Type",
+              "displayName": "Persona Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Hiring Manager",
+                  "value": "Hiring Manager"
+                },
+                {
+                  "name": "Recruiter",
+                  "value": "Recruiter"
+                },
+                {
+                  "name": "Peer IC",
+                  "value": "Peer IC"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Pitch Hook",
+              "displayName": "Pitch Hook",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Call to Action",
+              "displayName": "Call to Action",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Tailored Resume PDF Link",
+              "displayName": "Tailored Resume PDF Link",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outreach Status",
+              "displayName": "Outreach Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Queued",
+                  "value": "Queued"
+                },
+                {
+                  "name": "Sent",
+                  "value": "Sent"
+                },
+                {
+                  "name": "Replied",
+                  "value": "Replied"
+                },
+                {
+                  "name": "Bounced",
+                  "value": "Bounced"
+                },
+                {
+                  "name": "Approved",
+                  "value": "Approved"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Instantly Campaign ID",
+              "displayName": "Instantly Campaign ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Dated Added",
+              "displayName": "Dated Added",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Last Modified",
+              "displayName": "Last Modified",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        5456,
+        -480
+      ],
+      "id": "b4ea65ae-f93e-418a-9e20-e1c66f1a6616",
+      "name": "Populate Pitch Hook + CTA",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "YOUR_AIRTABLE_ACCOUNT",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dictionary to group contact IDs strictly by their parent jobRecordId\nconst jobToContactsMap = {};\n\nconst items = $input.all();\n\nfor (let index = 0; index < items.length; index++) {\n  const item = items[index];\n  const contactRecordId = item.json.id; // Created Contact's Airtable ID (e.g. recbY2R35S0tWvWOa)\n  \n  // 1. Try to get jobRecordId directly off item json\n  let jobRecordId = item.json.jobRecordId || \n                    item.json.parentJobRecordId || \n                    item.json.fields?.jobRecordId;\n\n  // 2. Fallback: Pull jobRecordId directly from 'Find the Correct DM1' or 'Update Contacts Table1'\n  if (!jobRecordId) {\n    try {\n      jobRecordId = $('Find the Correct DM1').itemMatching(index)?.json?.jobRecordId;\n    } catch (e) {\n      try {\n        jobRecordId = $('Find the Correct DM1').all()[index]?.json?.jobRecordId;\n      } catch (err) {}\n    }\n  }\n\n  // Group contacts under their matching parent jobRecordId\n  if (jobRecordId && contactRecordId) {\n    if (!jobToContactsMap[jobRecordId]) {\n      jobToContactsMap[jobRecordId] = [];\n    }\n    jobToContactsMap[jobRecordId].push(contactRecordId);\n  }\n}\n\n// 3. Convert dictionary into individual items for the final Update Jobs node\nconst finalOutput = [];\n\nfor (const [jobRecordId, contactIds] of Object.entries(jobToContactsMap)) {\n  finalOutput.push({\n    json: {\n      jobRecordId: jobRecordId,\n      contactRecordIds: contactIds // Array of contact IDs for THIS specific job row\n    }\n  });\n}\n\nreturn finalOutput;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4496,
+        -240
+      ],
+      "id": "08c02173-96cb-45f9-aa29-29f2de044763",
+      "name": "Code in JavaScript",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list",
+          "cachedResultName": "Tech Sales/SE Engine",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_JOBS_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "Jobs",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID/YOUR_AIRTABLE_JOBS_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Contacts": "={{ Object.values($json.contactRecordIds) }}",
+            "id": "={{ $json.jobRecordId }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Priority Tier",
+              "displayName": "Priority Tier",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Tier 1",
+                  "value": "Tier 1"
+                },
+                {
+                  "name": "Tier 2",
+                  "value": "Tier 2"
+                },
+                {
+                  "name": "Reject",
+                  "value": "Reject"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Workplace Type",
+              "displayName": "Workplace Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Remote",
+                  "value": "Remote"
+                },
+                {
+                  "name": "Hybrid",
+                  "value": "Hybrid"
+                },
+                {
+                  "name": "On-Site",
+                  "value": "On-Site"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Created",
+              "displayName": "Created",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Fit Score",
+              "displayName": "Fit Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Priority Score",
+              "displayName": "Outbound Priority Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Evaluation Reasoning",
+              "displayName": "Evaluation Reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Tailored Resume Link",
+              "displayName": "Tailored Resume Link",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "ATS Status",
+              "displayName": "ATS Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Needs Application",
+                  "value": "Needs Application"
+                },
+                {
+                  "name": "Applied",
+                  "value": "Applied"
+                },
+                {
+                  "name": "N/A",
+                  "value": "N/A"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Outbound Status",
+              "displayName": "Outbound Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Queued",
+                  "value": "Queued"
+                },
+                {
+                  "name": "Auto-Dispatched",
+                  "value": "Auto-Dispatched"
+                },
+                {
+                  "name": "Replied",
+                  "value": "Replied"
+                },
+                {
+                  "name": "Bypassed (Tier 2)",
+                  "value": "Bypassed (Tier 2)"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Contacts",
+              "displayName": "Contacts",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "array",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Name (from Contacts)",
+              "displayName": "Name (from Contacts)",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Custom Cover Letter",
+              "displayName": "Custom Cover Letter",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Independent Brokerage Bullets",
+              "displayName": "Independent Brokerage Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Aftersell Bullets",
+              "displayName": "Aftersell Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Garage Direct Bullets",
+              "displayName": "Garage Direct Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Loocrum Bullets",
+              "displayName": "Loocrum Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "SWE Internships Bullets",
+              "displayName": "SWE Internships Bullets",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Technical Stack",
+              "displayName": "Technical Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Revenue/GTM Stack",
+              "displayName": "Revenue/GTM Stack",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Last Modified",
+              "displayName": "Last Modified",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        4480,
+        0
+      ],
+      "id": "3987bbcc-7edf-463a-8f86-74b52bc75d04",
+      "name": "Update record",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "YOUR_AIRTABLE_ACCOUNT",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list",
+          "cachedResultName": "Tech Sales/SE Engine",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_CONTACTS_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "Contacts",
+          "cachedResultUrl": "https://airtable.com/YOUR_AIRTABLE_BASE_ID/YOUR_AIRTABLE_CONTACTS_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "LinkedIn URL": "={{ $json.body?.person?.linkedin_url }}",
+            "Persona Type": "={{ $('Find the Correct DM1').itemMatching($position).json.personaType }}",
+            "Email": "={{ $json.body?.person?.email.email }}",
+            "Title": "={{ $json.body?.person?.current_job_title }}",
+            "Name": "={{ $json.body?.person?.full_name }}",
+            "Company Name": "={{ $('Find the Correct DM1').item.json.organization }}",
+            "Company Domain": "={{ $('Find the Correct DM1').item.json.companyWebsite }}",
+            "Jobs": "={{ [ $('Find the Correct DM1').itemMatching($position).json.jobRecordId ] }}",
+            "Job Description": "={{ $('Find the Correct DM1').itemMatching($position).json.jobDescription }}"
+          },
+          "matchingColumns": [
+            "Email"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "LinkedIn URL",
+              "displayName": "LinkedIn URL",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company Name",
+              "displayName": "Company Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company Domain",
+              "displayName": "Company Domain",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Persona Type",
+              "displayName": "Persona Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Hiring Manager",
+                  "value": "Hiring Manager"
+                },
+                {
+                  "name": "Recruiter",
+                  "value": "Recruiter"
+                },
+                {
+                  "name": "Peer IC",
+                  "value": "Peer IC"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Jobs",
+              "displayName": "Jobs",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "array",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Target Job Title",
+              "displayName": "Target Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Job Description",
+              "displayName": "Job Description",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Pitch Hook",
+              "displayName": "Pitch Hook",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Call to Action",
+              "displayName": "Call to Action",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Tailored Resume PDF Link",
+              "displayName": "Tailored Resume PDF Link",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Outreach Status",
+              "displayName": "Outreach Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Queued",
+                  "value": "Queued"
+                },
+                {
+                  "name": "Sent",
+                  "value": "Sent"
+                },
+                {
+                  "name": "Replied",
+                  "value": "Replied"
+                },
+                {
+                  "name": "Bounced",
+                  "value": "Bounced"
+                },
+                {
+                  "name": "Approved",
+                  "value": "Approved"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Instantly Campaign ID",
+              "displayName": "Instantly Campaign ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Dated Added",
+              "displayName": "Dated Added",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Last Modified",
+              "displayName": "Last Modified",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Jobs 2",
+              "displayName": "Jobs 2",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "array",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "From field: Jobs",
+              "displayName": "From field: Jobs",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": false
+        }
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        4480,
+        -544
+      ],
+      "id": "b6079bf9-c24c-464f-8c60-e43ee80623fb",
+      "name": "Create New Contact",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "YOUR_AIRTABLE_ACCOUNT",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.prospeo.io/enrich-person",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-key",
+              "value": "YOUR_PROSPEO_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"only_verified_email\": true,\n  \"data\": {\n    \"person_id\": \"{{ $json.prospeoId }}\"\n  }\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 30,
+              "batchInterval": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        4288,
+        -496
+      ],
+      "id": "04418955-6a4c-483f-946d-536b3272e4c5",
+      "name": "Release Email Prospeo Credit"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "YOUR_APIFY_ACTOR_ID",
+          "mode": "list",
+          "cachedResultName": "Linkedin Jobs Scraper (curious_coder/linkedin-jobs-scraper)",
+          "cachedResultUrl": "https://console.apify.com/actors/YOUR_APIFY_ACTOR_ID/input"
+        },
+        "customBody": "{\n  \"urls\": [\n    \"https://www.linkedin.com/jobs/search/?keywords=((%22Commercial%22%20OR%20%22Mid%20Market%22%20OR%20%22Mid-Market%22%20OR%20%22SMB%22%20OR%20%22Enterprise%22%20OR%20%22Technical%22%20OR%20%22Corporate%22%20OR%20%22Strategic%22%20OR%20%22Territory%22)%20AND%20(%22AE%22%20OR%20%22Account%20Executive%22))%20OR%20%22Account%20Executive%22%20OR%20%22Sales%20Engineer%22%20OR%20%22Solutions%20Engineer%22%20OR%20%22Solutions%20Consultant%22%20OR%20%22Pre-Sales%22&location=Hong%20Kong&f_TPR=r86400&f_WT=1%2C2&sortBy=DD\",\n    \"https://www.linkedin.com/jobs/search/?keywords=((%22Commercial%22%20OR%20%22Mid%20Market%22%20OR%20%22Mid-Market%22%20OR%20%22SMB%22%20OR%20%22Enterprise%22%20OR%20%22Technical%22%20OR%20%22Corporate%22%20OR%20%22Strategic%22%20OR%20%22Territory%22)%20AND%20(%22AE%22%20OR%20%22Account%20Executive%22))%20OR%20%22Account%20Executive%22%20OR%20%22Sales%20Engineer%22%20OR%20%22Solutions%20Engineer%22%20OR%20%22Solutions%20Consultant%22%20OR%20%22Pre-Sales%22&location=Singapore&f_TPR=r86400&f_WT=1%2C2&sortBy=DD\"\n  ],\n  \"limitPerSource\": 50,\n  \"proxyConfiguration\": {\n    \"useApifyProxy\": true\n  }\n}",
+        "timeout": {},
+        "maxTotalChargeUsd": {}
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -144
+      ],
+      "id": "f65381dd-db6f-4734-b474-713ecc461c16",
+      "name": "Apify (LinkedIn) + Last 24 Hours",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "apifyApi": {
+          "id": "YOUR_APIFY_ACCOUNT",
+          "name": "Apify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "YOUR_APIFY_ACTOR_ID",
+          "mode": "list",
+          "cachedResultName": "Linkedin Jobs Scraper (curious_coder/linkedin-jobs-scraper)",
+          "cachedResultUrl": "https://console.apify.com/actors/YOUR_APIFY_ACTOR_ID/input"
+        },
+        "customBody": "{\n  \"urls\": [\n    \"https://www.linkedin.com/jobs/search/?keywords=((%22Commercial%22%20OR%20%22Mid%20Market%22%20OR%20%22Mid-Market%22%20OR%20%22SMB%22%20OR%20%22Enterprise%22%20OR%20%22Technical%22%20OR%20%22Corporate%22%20OR%20%22Strategic%22%20OR%20%22Territory%22)%20AND%20(%22AE%22%20OR%20%22Account%20Executive%22))%20OR%20%22Account%20Executive%22%20OR%20%22Sales%20Engineer%22%20OR%20%22Solutions%20Engineer%22%20OR%20%22Solutions%20Consultant%22%20OR%20%22Pre-Sales%22&location=Hong%20Kong&f_TPR=r2592000&f_WT=1%2C2&sortBy=DD\",\n    \"https://www.linkedin.com/jobs/search/?keywords=((%22Commercial%22%20OR%20%22Mid%20Market%22%20OR%20%22Mid-Market%22%20OR%20%22SMB%22%20OR%20%22Enterprise%22%20OR%20%22Technical%22%20OR%20%22Corporate%22%20OR%20%22Strategic%22%20OR%20%22Territory%22)%20AND%20(%22AE%22%20OR%20%22Account%20Executive%22))%20OR%20%22Account%20Executive%22%20OR%20%22Sales%20Engineer%22%20OR%20%22Solutions%20Engineer%22%20OR%20%22Solutions%20Consultant%22%20OR%20%22Pre-Sales%22&location=Singapore&f_TPR=r2592000&f_WT=1%2C2&sortBy=DD\"\n  ],\n  \"limitPerSource\": 300,\n  \"proxyConfiguration\": {\n    \"useApifyProxy\": true\n  }\n}",
+        "timeout": {},
+        "maxTotalChargeUsd": {}
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        400,
+        80
+      ],
+      "id": "5e6223a2-449b-4bed-8814-1e6e57ec017c",
+      "name": "Apify (LinkedIn) + Last 30 Day Backfill Window",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "apifyApi": {
+          "id": "YOUR_APIFY_ACCOUNT",
+          "name": "Apify account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = [];\nfor (const item of $input.all()) {\n  const rawText = item.json.text || item.json.output || '{}';\n  const cleanedText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\n  \n  let parsed = {};\n  try {\n    parsed = JSON.parse(cleanedText);\n  } catch (e) {\n    parsed = { priorityTier: 'Reject', fitScore: 0, reasoning: 'Parse error' };\n  }\n\n  output.push({\n    json: {\n      ...item.json,\n      priorityTier: parsed.priorityTier || 'Reject',\n      fitScore: parsed.fitScore || 0,\n      reasoning: parsed.reasoning || ''\n    }\n  });\n}\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        -288
+      ],
+      "id": "47dded08-25c5-48d3-bb4c-8b1dd2f8dc45",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5d336193-9f53-4187-ad24-e1e4d3492c53",
+              "leftValue": "={{ $json.priorityTier }}",
+              "rightValue": "Reject",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        -304
+      ],
+      "id": "26147b35-980f-47a1-82ab-ff9e40e47ca8",
+      "name": "Not Reject?"
+    }
+  ],
+  "connections": {
+    "JD Fit Scorer": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Calculate Job Fit",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CV Tailor": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Tailor Resume Bullets to JD",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML to PDF": {
+      "main": [
+        [
+          {
+            "node": "Tailored Resume on Cloud",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tailored Resume on Cloud": {
+      "main": [
+        [
+          {
+            "node": "Update Records with Resume Cloud Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preferred Job Titles Filter Only": {
+      "main": [
+        [
+          {
+            "node": "Limit (Testing only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Job Fit": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 8am EST timezone": {
+      "main": [
+        [
+          {
+            "node": "Apify (LinkedIn) + Last 24 Hours",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Apify (LinkedIn) + Last 30 Day Backfill Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tier 1?": {
+      "main": [
+        [
+          {
+            "node": "Tailor Resume Bullets to JD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tailor Resume Bullets to JD": {
+      "main": [
+        [
+          {
+            "node": "Cleanup LLM Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleanup LLM Output": {
+      "main": [
+        [
+          {
+            "node": "Update Records with Tailored Bullets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Records with Tailored Bullets": {
+      "main": [
+        [
+          {
+            "node": "Format into HTML Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Records with Resume Cloud Link": {
+      "main": [
+        [
+          {
+            "node": "Data Transfer from T1 to T2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format into HTML Resume": {
+      "main": [
+        [
+          {
+            "node": "HTML to PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create New Job Record": {
+      "main": [
+        [
+          {
+            "node": "Tier 1?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find DMs with Root Domain via Prospeo": {
+      "main": [
+        [
+          {
+            "node": "Find the Correct DM1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find the Correct DM1": {
+      "main": [
+        [
+          {
+            "node": "Release Email Prospeo Credit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instantly Email Tailor1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Personalized Outreach Email1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Personalized Outreach Email1": {
+      "main": [
+        [
+          {
+            "node": "Build JSON for Email Merge Tags1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build JSON for Email Merge Tags1": {
+      "main": [
+        [
+          {
+            "node": "Populate Pitch Hook + CTA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit (Testing only)": {
+      "main": [
+        [
+          {
+            "node": "Calculate Job Fit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Transfer from T1 to T2": {
+      "main": [
+        [
+          {
+            "node": "Find DMs with Root Domain via Prospeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Populate Pitch Hook + CTA": {
+      "main": [
+        [
+          {
+            "node": "Add Emails into Instantly Campaign1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Update record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update record": {
+      "main": [
+        []
+      ]
+    },
+    "Create New Contact": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Personalized Outreach Email1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Email Prospeo Credit": {
+      "main": [
+        [
+          {
+            "node": "Create New Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify (LinkedIn) + Last 24 Hours": {
+      "main": [
+        [
+          {
+            "node": "Preferred Job Titles Filter Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify (LinkedIn) + Last 30 Day Backfill Window": {
+      "main": [
+        [
+          {
+            "node": "Preferred Job Titles Filter Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Not Reject?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Reject?": {
+      "main": [
+        [
+          {
+            "node": "Create New Job Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "09b66cb70fc4ba097f92a6458a7f1fbb890134e7680b74bdf4c83a8f859a9af9"
+  }
+}

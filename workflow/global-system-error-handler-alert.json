@@ -1,0 +1,54 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e551ff50-cedf-4788-9815-0d123d5040d6",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=ALERT: WORKFLOW EXECUTION FAILED\n\nWorkflow Name: {{ $json.workflow.name }}\nExecution ID: {{ $json.execution.id }}\nFailed Node: {{ $json.execution.lastNodeExecuted }}\n\nError Details:\n{{ $json.execution.error.message }}\n\nExecution Link: {{ $json.execution.url }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "540cd658-8438-4be5-b615-cedc81e29544",
+      "name": "Message the Telegram Bot",
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_ACCOUNT",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Message the Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "09b66cb70fc4ba097f92a6458a7f1fbb890134e7680b74bdf4c83a8f859a9af9"
+  }
+}

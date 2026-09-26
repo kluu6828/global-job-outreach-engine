@@ -1,0 +1,205 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "\"interview\" OR \"coffee chat\" OR \"screen\" OR \"schedule\" OR \"application\" OR \"next steps\" -from:noreply -from:notifications",
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "08972008-a2bb-4b31-9686-a8342b40e7e0",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_ACCOUNT_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        192
+      ],
+      "id": "10387b56-7acc-40f6-b3e2-36359e662129",
+      "name": "JD Fit Scorer",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GEMINI_ACCOUNT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5bf9a2e7-bcfe-4d74-b2af-4a5e17bee35c",
+              "leftValue": "={{ $json.isPositiveOpportunity }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        960,
+        0
+      ],
+      "id": "1ac07d79-0c33-479a-91b7-25845a095892",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an executive job engine assistant evaluating an incoming email from the candidate's personal inbox.\n\nINCOMING EMAIL DETAILS:\nFrom: {{ $json.from }}\nSubject: {{ $json.subject }}\nBody Snippet: {{ $json.text }}\n\nDetermine if this email is a positive interaction regarding a job opportunity (e.g., recruiter reaching out, interview scheduling request, coffee chat invite, or application follow-up).\n\nReturn strictly raw JSON (no markdown wrapping):\n{\n  \"isPositiveOpportunity\": true | false,\n  \"companyName\": \"<Extracted Company Name or Unknown>\",\n  \"summary\": \"<1-sentence summary of what the sender is asking/offering>\",\n  \"urgency\": \"High\" | \"Medium\" | \"Low\"\n}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        336,
+        0
+      ],
+      "id": "fa7bb30a-396b-4c47-a662-b13969c41b0a",
+      "name": "Filter Positive Responses",
+      "retryOnFail": false,
+      "alwaysOutputData": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n  // Grab raw text output from Gemini\n  const rawText = item.json.text || item.json.output || '';\n  \n  // Clean markdown fences (```json) if present\n  const cleanedText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\n\n  try {\n    const parsed = JSON.parse(cleanedText);\n    item.json.isPositiveOpportunity = parsed.isPositiveOpportunity ?? false;\n    item.json.companyName = parsed.companyName || 'Unknown';\n    item.json.summary = parsed.summary || '';\n    item.json.urgency = parsed.urgency || 'Low';\n  } catch (e) {\n    // Safety fallback if email parsing fails\n    item.json.isPositiveOpportunity = false;\n    item.json.companyName = 'Unknown';\n    item.json.summary = 'Failed to parse email intent.';\n    item.json.urgency = 'Low';\n  }\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "e6f220e1-f11c-457f-9293-a3e81fa7da3d",
+      "name": "Parse JSON"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=📬 PRIMARY GMAIL: INTERVIEW / RECRUITER ALERT!\n\n👤 From: {{ $('Gmail Trigger').item.json.from }}\n📌 Subject: {{ $('Gmail Trigger').item.json.subject }}\n🏢 Company: {{ $json.companyName }}\n\n📝 Summary: \n{{ $json.summary }}\n\n👉 Check primary Gmail to respond for next steps & confirm calendar time!",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1232,
+        -96
+      ],
+      "id": "6abe84f9-225c-426e-bbd2-33a314488e5e",
+      "name": "Message the Telegram Bot",
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_ACCOUNT",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Positive Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JD Fit Scorer": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Filter Positive Responses",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Message the Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Positive Responses": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "09b66cb70fc4ba097f92a6458a7f1fbb890134e7680b74bdf4c83a8f859a9af9"
+  }
+}
