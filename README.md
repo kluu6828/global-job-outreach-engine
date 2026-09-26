@@ -22,5 +22,5 @@ A semi-autonomous GTM and job search engine built to eliminate application fatig
 ---
 
 ## 📂 Repository Contents
-- `/workflows/n8n-workflow-template.json`: The complete exportable n8n state machine workflow template.
+- `/workflow/n8n-workflow-template.json`: The complete exportable n8n state machine workflow template.
 - `/docs`: Architecture diagrams and workflow breakdowns.
